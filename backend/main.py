@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from agent.agent_loop import run_agent
 from agent.tools import TOOL_DEFINITIONS, tool_executor
+from policy import rule_store
 
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -75,6 +76,10 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class PolicyActionRequest(BaseModel):
+    tool_name: str = Field(..., description="Name of the tool to update policy for.")
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["Meta"])
@@ -87,6 +92,46 @@ async def health() -> HealthResponse:
 async def list_tools() -> dict[str, Any]:
     """Return the currently registered tool definitions."""
     return {"tools": TOOL_DEFINITIONS, "count": len(TOOL_DEFINITIONS)}
+
+
+# ── Policy Management Endpoints ───────────────────────────────────────────────
+
+@app.get("/policy/rules", tags=["Policy"])
+async def get_policy_rules() -> dict[str, Any]:
+    """Return the current state of all policy rules."""
+    return rule_store.get_rules()
+
+
+@app.post("/policy/block", tags=["Policy"])
+async def block_tool(req: PolicyActionRequest) -> dict[str, str]:
+    """Block a tool from ever being executed by the agent."""
+    rule_store.block_tool(req.tool_name)
+    logger.info("Policy updated: BLOCKED tool=%s", req.tool_name)
+    return {"status": "ok", "message": f"Tool '{req.tool_name}' is now BLOCKED."}
+
+
+@app.post("/policy/unblock", tags=["Policy"])
+async def unblock_tool(req: PolicyActionRequest) -> dict[str, str]:
+    """Remove a tool from the blocked list."""
+    rule_store.unblock_tool(req.tool_name)
+    logger.info("Policy updated: UNBLOCKED tool=%s", req.tool_name)
+    return {"status": "ok", "message": f"Tool '{req.tool_name}' is now UNBLOCKED."}
+
+
+@app.post("/policy/approve", tags=["Policy"])
+async def require_approval(req: PolicyActionRequest) -> dict[str, str]:
+    """Mark a tool as requiring human approval before execution."""
+    rule_store.require_approval(req.tool_name)
+    logger.info("Policy updated: NEEDS_APPROVAL tool=%s", req.tool_name)
+    return {"status": "ok", "message": f"Tool '{req.tool_name}' now requires approval."}
+
+
+@app.post("/policy/unapprove", tags=["Policy"])
+async def remove_approval(req: PolicyActionRequest) -> dict[str, str]:
+    """Remove the approval requirement from a tool."""
+    rule_store.remove_approval(req.tool_name)
+    logger.info("Policy updated: approval removed tool=%s", req.tool_name)
+    return {"status": "ok", "message": f"Tool '{req.tool_name}' approval requirement removed."}
 
 
 @app.post("/chat", response_model=ChatResponse, tags=["Agent"])
