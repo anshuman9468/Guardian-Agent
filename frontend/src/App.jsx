@@ -7,6 +7,9 @@ import {
   getPendingApprovals,
   approveRequest,
   denyRequest,
+  getDirectories,
+  addDirectory,
+  removeDirectory,
 } from "./api";
 import ReactMarkdown from "react-markdown";
 import "./index.css";
@@ -94,6 +97,8 @@ export default function App() {
   const [rules, setRules]         = useState({ blocked_tools: [], approval_tools: [] });
   const [toolNames, setToolNames] = useState([]);
   const [pending, setPending]     = useState([]);
+  const [directories, setDirectories] = useState([]);
+  const [dirInput, setDirInput]       = useState("");
   const [syncing, setSyncing]     = useState(false);
   const [lastSync, setLastSync]   = useState(null);
 
@@ -114,12 +119,13 @@ export default function App() {
   const fetchAll = useCallback(async () => {
     setSyncing(true);
     try {
-      const [rulesRes, toolsRes, pendingRes] = await Promise.all([
-        getRules(), getTools(), getPendingApprovals(),
+      const [rulesRes, toolsRes, pendingRes, dirsRes] = await Promise.all([
+        getRules(), getTools(), getPendingApprovals(), getDirectories()
       ]);
       setRules(rulesRes.data);
       setToolNames(toolsRes.data.tools.map((t) => t.function.name));
       setPending(pendingRes.data.pending || []);
+      setDirectories(dirsRes.data.directories || []);
       setLastSync(nowStr());
     } catch (_) {}
     finally { setSyncing(false); }
@@ -169,6 +175,30 @@ export default function App() {
       setMessages(m => [...m, { role: "agent", content: `🚫 Request denied — '${res.data.tool}' was not executed.`, ts: nowStr() }]);
     } catch {}
     fetchAll();
+  };
+
+  // ── Directory actions ─────────────────────────────────────────────────────────
+
+  const handleAddDirectory = async () => {
+    if (!dirInput.trim()) return;
+    try {
+      await addDirectory(dirInput);
+      setDirInput("");
+      addLog("ALLOWED", "filesystem", "allow-dir", `Allowed path: ${dirInput}`);
+      fetchAll();
+    } catch (err) {
+      alert(`Failed to add directory: ${err.message}`);
+    }
+  };
+
+  const handleRemoveDirectory = async (path) => {
+    try {
+      await removeDirectory(path);
+      addLog("BLOCKED", "filesystem", "remove-dir", `Removed path: ${path}`);
+      fetchAll();
+    } catch (err) {
+      alert(`Failed to remove directory: ${err.message}`);
+    }
   };
 
   // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -257,6 +287,43 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Directory Allowlist */}
+        <div className="panel">
+          <div className="panel-header">
+            📁 Allowed Directories
+            <span className="panel-header-count">{directories.length}</span>
+          </div>
+          <div style={{ padding: "12px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <input
+                type="text"
+                placeholder="e.g. /home/anshumandutta/project"
+                value={dirInput}
+                onChange={(e) => setDirInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddDirectory(); }}
+                style={{
+                  flex: 1, padding: "6px 8px", background: "rgba(0,0,0,0.2)",
+                  border: "1px solid var(--border)", borderRadius: "4px",
+                  color: "#fff", fontSize: "12px", fontFamily: "var(--font-mono)"
+                }}
+              />
+              <button onClick={handleAddDirectory} className="btn-approve" style={{ padding: "4px 8px", fontSize: "12px" }}>
+                Add
+              </button>
+            </div>
+          </div>
+          <div className="tool-list">
+            {directories.map(d => (
+              <div key={d} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "12px", fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>{d}</span>
+                <button onClick={() => handleRemoveDirectory(d)} style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", fontSize: "16px" }}>
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Tool Policies */}
         <div className="panel">

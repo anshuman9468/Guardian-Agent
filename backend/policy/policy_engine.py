@@ -140,6 +140,25 @@ def evaluate(tool_name: str, args: dict[str, Any]) -> PolicyResult:
         logger.info("NEEDS_APPROVAL | tool=%s", tool_name)
         return result
 
+    # ── 2.5 Path Validation (Dynamic Allowlist) ───────────────────────────────
+    from policy.directory_store import is_path_allowed
+    
+    # Check if this tool tries to use a path argument
+    paths_to_check = []
+    if "path" in args and isinstance(args["path"], str):
+        paths_to_check.append(args["path"])
+    if "paths" in args and isinstance(args["paths"], list):
+        paths_to_check.extend(args["paths"])
+        
+    for p in paths_to_check:
+        if not is_path_allowed(p):
+            result = PolicyResult(
+                PolicyResult.BLOCKED,
+                f"Access denied - path outside allowed directories: {p}"
+            )
+            logger.warning("BLOCKED_PATH | tool=%s | path=%s", tool_name, p)
+            return result
+
     # ── 3. Input validation ───────────────────────────────────────────────────
     validation = _validate_inputs(tool_name, args)
     if not validation.is_allowed:

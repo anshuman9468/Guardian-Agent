@@ -58,7 +58,7 @@ def _build_server_configs() -> list[MCPServerConfig]:
         MCPServerConfig(
             name    = "filesystem",
             command = "npx",
-            args    = ["-y", "@modelcontextprotocol/server-filesystem", sandbox],
+            args    = ["-y", "@modelcontextprotocol/server-filesystem", "/home/anshumandutta"],
             enabled = os.getenv("MCP_FILESYSTEM_ENABLED", "true").lower() == "true",
         ),
 

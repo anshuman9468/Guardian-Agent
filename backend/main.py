@@ -170,6 +170,32 @@ async def remove_approval(req: PolicyActionRequest) -> dict[str, str]:
     return {"status": "ok", "message": f"Approval removed for '{req.tool_name}'."}
 
 
+# ── Directory Allowlist endpoints ───────────────────────────────────────────
+
+class AddDirectoryRequest(BaseModel):
+    path: str = Field(..., description="Absolute path to allow")
+
+@app.get("/directories", tags=["Policy"])
+async def list_directories() -> dict[str, Any]:
+    from policy.directory_store import get_allowed_dirs
+    return {"directories": get_allowed_dirs()}
+
+@app.post("/directories/add", tags=["Policy"])
+async def add_directory(req: AddDirectoryRequest) -> dict[str, Any]:
+    from policy.directory_store import add_allowed_dir
+    result = add_allowed_dir(req.path)
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.post("/directories/remove", tags=["Policy"])
+async def remove_directory(req: AddDirectoryRequest) -> dict[str, Any]:
+    from policy.directory_store import remove_allowed_dir
+    result = remove_allowed_dir(req.path)
+    if result["status"] == "error":
+        raise HTTPException(status_code=404, detail=result["message"])
+    return result
+
 # ── Approval endpoints ────────────────────────────────────────────────────────
 
 @app.get("/approvals/pending", tags=["Approvals"])

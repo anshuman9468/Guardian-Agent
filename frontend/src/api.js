@@ -17,3 +17,8 @@ export const sendChat = (message, history = [], model) =>
 export const getPendingApprovals = ()          => api.get("/approvals/pending");
 export const approveRequest      = (request_id)=> api.post("/approve", { request_id });
 export const denyRequest         = (request_id)=> api.post("/deny",    { request_id });
+
+// ── Directory Allowlist ──────────────────────────────────────────────────────
+export const getDirectories    = ()     => api.get("/directories");
+export const addDirectory      = (path) => api.post("/directories/add", { path });
+export const removeDirectory   = (path) => api.post("/directories/remove", { path });
