@@ -38,30 +38,61 @@ class MCPServerConfig:
 def _build_server_configs() -> list[MCPServerConfig]:
     """
     Build the list of MCP servers to connect to.
-    Reads toggles from environment variables so you can enable/disable
-    servers without changing code.
+    Current servers:
+      1. filesystem  — local file ops (sandbox dir)
+      2. fetch       — fetch any public URL (remote, no API key)
+      3. github      — GitHub repo analyzer (custom, built by us)
     """
-    sandbox = os.getenv(
+    import sys
+
+    sandbox = os.path.abspath(os.getenv(
         "MCP_FILESYSTEM_ROOT",
         os.path.join(os.path.dirname(__file__), "..", "..", "guardian-sandbox"),
-    )
-    sandbox = os.path.abspath(sandbox)
+    ))
+
+    _backend_dir       = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    github_server_path = os.path.join(_backend_dir, "custom_mcp", "github_server.py")
 
     return [
+        # ── 1. Filesystem MCP (local sandbox) ─────────────────────────────────
         MCPServerConfig(
             name    = "filesystem",
             command = "npx",
             args    = ["-y", "@modelcontextprotocol/server-filesystem", sandbox],
             enabled = os.getenv("MCP_FILESYSTEM_ENABLED", "true").lower() == "true",
         ),
-        # ── Add more servers here ──────────────────────────────────────────
-        # MCPServerConfig(
-        #     name    = "figma",
-        #     command = "npx",
-        #     args    = ["-y", "@figma/mcp-server"],
-        #     env     = {"FIGMA_PERSONAL_ACCESS_TOKEN": os.getenv("FIGMA_TOKEN", "")},
-        #     enabled = bool(os.getenv("FIGMA_TOKEN")),
-        # ),
+
+        # ── 2. Fetch MCP (remote — fetches any public URL) ────────────────────
+        # Uses the Python mcp-server-fetch package (pip install mcp-server-fetch)
+        MCPServerConfig(
+            name    = "fetch",
+            command = sys.executable,
+            args    = ["-m", "mcp_server_fetch"],
+            enabled = os.getenv("MCP_FETCH_ENABLED", "true").lower() == "true",
+        ),
+
+        # ── 3. GitHub Analyzer MCP (custom Python server) ─────────────────────
+        MCPServerConfig(
+            name    = "github",
+            command = sys.executable,
+            args    = [github_server_path],
+            enabled = os.getenv("MCP_GITHUB_ENABLED", "true").lower() == "true",
+            env     = {
+                "GITHUB_TOKEN": os.getenv("GITHUB_TOKEN", ""),
+                "PYTHONPATH":   _backend_dir,
+            },
+        ),
+
+        # ── 4. SQLite Notes MCP (custom Python server) ────────────────────────
+        MCPServerConfig(
+            name    = "sqlite",
+            command = sys.executable,
+            args    = [os.path.join(_backend_dir, "custom_mcp", "sqlite_server.py")],
+            enabled = os.getenv("MCP_SQLITE_ENABLED", "true").lower() == "true",
+            env     = {
+                "PYTHONPATH": _backend_dir,
+            },
+        ),
     ]
 
 
@@ -96,6 +127,10 @@ class MCPServerRegistry:
             except Exception as exc:
                 logger.error(
                     "Failed to connect to MCP server '%s': %s. Skipping.", cfg.name, exc
+                )
+            except BaseException as exc:   # CancelledError etc.
+                logger.error(
+                    "MCP server '%s' failed with non-Exception: %s. Skipping.", cfg.name, type(exc).__name__
                 )
 
         await self._refresh_tool_map()

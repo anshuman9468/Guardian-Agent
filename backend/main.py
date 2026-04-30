@@ -92,6 +92,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
+    history: list[dict[str, str]] = Field(default_factory=list)
     model:   str = Field(default="google/gemini-2.5-flash")
 
 
@@ -212,6 +213,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     try:
         answer = await run_agent(
             user_input    = req.message,
+            history       = req.history,
             tools         = all_tools,
             tool_executor = unified_tool_executor,
             model         = req.model,

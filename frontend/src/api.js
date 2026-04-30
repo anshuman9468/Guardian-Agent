@@ -10,7 +10,8 @@ export const unblockTool        = (tool) => api.post("/policy/unblock",  { tool_
 export const approveTool        = (tool) => api.post("/policy/approve",  { tool_name: tool });
 export const unapproveTool      = (tool) => api.post("/policy/unapprove",{ tool_name: tool });
 export const getTools           = ()     => api.get("/tools");
-export const sendChat           = (message, model) => api.post("/chat", { message, model });
+export const sendChat = (message, history = [], model) =>
+  api.post("/chat", { message, history, model });
 
 // Approval workflow
 export const getPendingApprovals = ()          => api.get("/approvals/pending");

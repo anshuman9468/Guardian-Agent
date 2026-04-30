@@ -8,50 +8,43 @@ import {
   approveRequest,
   denyRequest,
 } from "./api";
+import ReactMarkdown from "react-markdown";
 import "./index.css";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const now = () =>
-  new Date().toLocaleTimeString("en-US", { hour12: false });
+const nowStr = () => new Date().toLocaleTimeString("en-US", { hour12: false });
 
-const classifyResponse = (text) => {
-  if (!text) return "";
+const classifyResponse = (text = "") => {
   if (text.startsWith("❌")) return "blocked";
-  if (text.startsWith("⏳")) return "approval";
-  if (text.startsWith("⚠️")) return "approval";
+  if (text.startsWith("⏳") || text.startsWith("⚠️")) return "approval";
   return "";
 };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function StatusDot({ syncing }) {
-  return <span className={`pulse-dot ${syncing ? "syncing" : ""}`} />;
-}
-
 function ToolRow({ name, status, onBlock, onUnblock, onApprove, onUnapprove }) {
-  const rowClass =
-    status === "blocked"  ? "tool-row blocked"  :
-    status === "approval" ? "tool-row approval"  : "tool-row allowed";
-
   const badge =
     status === "blocked"  ? <span className="status-badge badge-blocked">BLOCKED</span>  :
     status === "approval" ? <span className="status-badge badge-approval">APPROVAL</span> :
                             <span className="status-badge badge-allowed">ALLOWED</span>;
 
   return (
-    <div className={rowClass}>
-      <div className="tool-name">{name}{badge}</div>
-      <div className="tool-actions">
+    <div className={`tool-row ${status}`}>
+      <div className="tool-row-top">
+        <span className="tool-name-text" title={name}>{name}</span>
+        {badge}
+      </div>
+      <div className="tool-row-bottom">
         {status === "blocked" ? (
-          <button className="btn btn-allow" onClick={() => onUnblock(name)}>Allow</button>
+          <button className="btn btn-allow" onClick={() => onUnblock(name)}>✓ Allow</button>
         ) : (
-          <button className="btn btn-block" onClick={() => onBlock(name)}>Block</button>
+          <button className="btn btn-block" onClick={() => onBlock(name)}>✕ Block</button>
         )}
         {status === "approval" ? (
-          <button className="btn btn-allow" onClick={() => onUnapprove(name)}>Remove</button>
+          <button className="btn btn-allow" onClick={() => onUnapprove(name)}>✓ Remove</button>
         ) : status !== "blocked" ? (
-          <button className="btn btn-approve" onClick={() => onApprove(name)}>Approve</button>
+          <button className="btn btn-approve" onClick={() => onApprove(name)}>⏳ Require Approval</button>
         ) : null}
       </div>
     </div>
@@ -76,30 +69,20 @@ function TypingIndicator() {
 
 function ApprovalCard({ req, onApprove, onDeny }) {
   const argsStr = Object.keys(req.args || {}).length
-    ? JSON.stringify(req.args, null, 2)
-    : "no arguments";
-
-  const age = Math.floor(
-    (Date.now() - new Date(req.created_at).getTime()) / 1000
-  );
+    ? JSON.stringify(req.args, null, 2) : "no arguments";
+  const age = Math.floor((Date.now() - new Date(req.created_at).getTime()) / 1000);
 
   return (
     <div className="approval-card">
       <div className="approval-card-header">
-        <span className="approval-tool-name">⏳ {req.tool}</span>
+        <div className="approval-tool-name">⏳ {req.tool}</div>
         <span className="approval-meta">{age}s ago</span>
       </div>
       <div className="approval-args">{argsStr}</div>
-      <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
-        ID: {req.request_id.slice(0, 8)}…
-      </div>
+      <div className="approval-id">ID: {req.request_id.slice(0, 12)}…</div>
       <div className="approval-btns">
-        <button className="btn btn-approve-action" onClick={() => onApprove(req.request_id)}>
-          ✅ Approve &amp; Run
-        </button>
-        <button className="btn btn-deny-action" onClick={() => onDeny(req.request_id)}>
-          🚫 Deny
-        </button>
+        <button className="btn-approve-action" onClick={() => onApprove(req.request_id)}>✅ Approve & Run</button>
+        <button className="btn-deny-action"    onClick={() => onDeny(req.request_id)}>🚫 Deny</button>
       </div>
     </div>
   );
@@ -115,7 +98,7 @@ export default function App() {
   const [lastSync, setLastSync]   = useState(null);
 
   const [messages, setMessages]   = useState([
-    { role: "system", content: "Guardian Agent is ready. Policy engine active 🛡️", ts: now() }
+    { role: "system", content: "Guardian Agent online. Policy engine active · 3 MCP servers connected 🛡️", ts: nowStr() }
   ]);
   const [input, setInput]         = useState("");
   const [loading, setLoading]     = useState(false);
@@ -123,6 +106,8 @@ export default function App() {
 
   const [logs, setLogs]           = useState([]);
   const [tab, setTab]             = useState("chat");
+  // Tracks user/agent turns for multi-turn context
+  const chatHistory               = useRef([]);
 
   // ── Polling ──────────────────────────────────────────────────────────────────
 
@@ -135,10 +120,9 @@ export default function App() {
       setRules(rulesRes.data);
       setToolNames(toolsRes.data.tools.map((t) => t.function.name));
       setPending(pendingRes.data.pending || []);
-      setLastSync(now());
-    } catch (_) { /* backend offline */ } finally {
-      setSyncing(false);
-    }
+      setLastSync(nowStr());
+    } catch (_) {}
+    finally { setSyncing(false); }
   }, []);
 
   useEffect(() => {
@@ -153,50 +137,37 @@ export default function App() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
-  const getStatus = (name) => {
-    if (rules.blocked_tools.includes(name))  return "blocked";
-    if (rules.approval_tools.includes(name)) return "approval";
-    return "allowed";
-  };
+  const getStatus = (n) =>
+    rules.blocked_tools.includes(n)  ? "blocked"  :
+    rules.approval_tools.includes(n) ? "approval" : "allowed";
 
   const addLog = (type, tool, action, result) =>
-    setLogs((l) => [{ ts: now(), type, tool, action, result }, ...l].slice(0, 100));
+    setLogs(l => [{ ts: nowStr(), type, tool, action, result }, ...l].slice(0, 150));
 
   // ── Policy actions ────────────────────────────────────────────────────────────
 
-  const handleBlock     = async (n) => { await blockTool(n);     fetchAll(); addLog("BLOCKED",  n, "block",     `'${n}' blocked`); };
-  const handleUnblock   = async (n) => { await unblockTool(n);   fetchAll(); addLog("ALLOWED",  n, "unblock",   `'${n}' unblocked`); };
-  const handleApprove   = async (n) => { await approveTool(n);   fetchAll(); addLog("APPROVAL", n, "approve",   `'${n}' needs approval`); };
+  const handleBlock     = async (n) => { await blockTool(n);     fetchAll(); addLog("BLOCKED",  n, "block",     `'${n}' is now blocked`); };
+  const handleUnblock   = async (n) => { await unblockTool(n);   fetchAll(); addLog("ALLOWED",  n, "unblock",   `'${n}' is now allowed`); };
+  const handleApprove   = async (n) => { await approveTool(n);   fetchAll(); addLog("APPROVAL", n, "approve",   `'${n}' requires approval`); };
   const handleUnapprove = async (n) => { await unapproveTool(n); fetchAll(); addLog("ALLOWED",  n, "unapprove", `Approval removed for '${n}'`); };
 
   // ── Approval actions ──────────────────────────────────────────────────────────
 
-  const handleApproveRequest = async (request_id) => {
+  const handleApproveRequest = async (id) => {
     try {
-      const res = await approveRequest(request_id);
-      const d = res.data;
-      addLog("ALLOWED", d.tool, "approved", `✅ Executed: ${d.result}`);
-      setMessages((m) => [...m, {
-        role: "agent",
-        content: `✅ Approved & executed '${d.tool}': ${d.result}`,
-        ts: now(),
-      }]);
-    } catch {
-      addLog("BLOCKED", "?", "approve-error", "Approval failed — request may have expired");
-    }
+      const res = await approveRequest(id);
+      addLog("ALLOWED", res.data.tool, "approved", `✅ Executed: ${res.data.result}`);
+      setMessages(m => [...m, { role: "agent", content: `✅ Approved & executed '${res.data.tool}':\n${res.data.result}`, ts: nowStr() }]);
+    } catch { addLog("BLOCKED", "?", "approve-error", "Approval failed — request may have expired"); }
     fetchAll();
   };
 
-  const handleDenyRequest = async (request_id) => {
+  const handleDenyRequest = async (id) => {
     try {
-      const res = await denyRequest(request_id);
-      addLog("BLOCKED", res.data.tool, "denied", `🚫 Denied execution of '${res.data.tool}'`);
-      setMessages((m) => [...m, {
-        role: "agent",
-        content: `🚫 Request denied — '${res.data.tool}' was not executed.`,
-        ts: now(),
-      }]);
-    } catch { /* noop */ }
+      const res = await denyRequest(id);
+      addLog("BLOCKED", res.data.tool, "denied", `🚫 Denied '${res.data.tool}'`);
+      setMessages(m => [...m, { role: "agent", content: `🚫 Request denied — '${res.data.tool}' was not executed.`, ts: nowStr() }]);
+    } catch {}
     fetchAll();
   };
 
@@ -206,30 +177,24 @@ export default function App() {
     const text = input.trim();
     if (!text || loading) return;
     setInput("");
-    setMessages((m) => [...m, { role: "user", content: text, ts: now() }]);
+    setMessages(m => [...m, { role: "user", content: text, ts: nowStr() }]);
     setLoading(true);
+    // Build history to send (only user/agent turns, not system UI msgs)
+    const history = chatHistory.current.slice();
+    chatHistory.current = [...history, { role: "user", content: text }];
     try {
-      const res = await sendChat(text);
+      const res = await sendChat(text, history);
       const { response: reply, pending_request_id } = res.data;
-      setMessages((m) => [...m, { role: "agent", content: reply, ts: now() }]);
-
+      chatHistory.current = [...chatHistory.current, { role: "assistant", content: reply }];
+      setMessages(m => [...m, { role: "agent", content: reply, ts: nowStr() }]);
       const cls = classifyResponse(reply);
-      if (cls === "blocked")  addLog("BLOCKED",  "?", "chat", reply);
-      if (cls === "approval") addLog("APPROVAL", "?", "chat", reply);
-      if (pending_request_id) {
-        addLog("APPROVAL", "?", "pending", `New approval request: ${pending_request_id.slice(0,8)}…`);
-      }
-      if (!cls && reply.includes("via tool")) addLog("ALLOWED", "?", "chat", reply);
-      fetchAll(); // refresh pending list immediately
+      if (cls === "blocked")       addLog("BLOCKED",  "?", "chat", reply);
+      else if (cls === "approval") addLog("APPROVAL", "?", "chat", reply);
+      else                         addLog("ALLOWED",  "?", "chat", `Response: ${reply.slice(0, 60)}…`);
+      if (pending_request_id) fetchAll();
     } catch {
-      setMessages((m) => [...m, {
-        role: "agent",
-        content: "❌ Request failed — check that the backend is running.",
-        ts: now(),
-      }]);
-    } finally {
-      setLoading(false);
-    }
+      setMessages(m => [...m, { role: "agent", content: "❌ Backend unreachable — is uvicorn running on port 8000?", ts: nowStr() }]);
+    } finally { setLoading(false); }
   };
 
   const handleKey = (e) => {
@@ -241,54 +206,53 @@ export default function App() {
   const blockedCount  = rules.blocked_tools.length;
   const approvalCount = rules.approval_tools.length;
   const allowedCount  = Math.max(0, toolNames.length - blockedCount - approvalCount);
+
   const logIcon = (t) => t === "BLOCKED" ? "🚫" : t === "APPROVAL" ? "⏳" : "✅";
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="app">
-      {/* Header */}
+      {/* ── Header ── */}
       <header className="header">
         <div className="header-logo">
-          <span className="shield">🛡️</span>
-          <span className="logo-gradient">Guardian Agent</span>
+          <div className="logo-icon">🛡️</div>
+          <span className="logo-text">Guardian Agent</span>
+          <span className="logo-badge">v0.2</span>
         </div>
-        <div className="header-status">
-          <StatusDot syncing={syncing} />
-          {syncing ? "Syncing…" : `Synced ${lastSync || "—"}`}
+        <div className="header-right">
           {pending.length > 0 && (
-            <span className="approval-badge" style={{ marginLeft: 12 }}>
-              ⏳ {pending.length} pending
-            </span>
+            <div className="pending-header-badge">
+              ⏳ {pending.length} pending approval{pending.length > 1 ? "s" : ""}
+            </div>
           )}
+          <div className="header-status">
+            <span className={`pulse-dot ${syncing ? "syncing" : ""}`} />
+            {syncing ? "Syncing…" : `Live · ${lastSync || "—"}`}
+          </div>
         </div>
       </header>
 
-      {/* Sidebar */}
+      {/* ── Sidebar ── */}
       <aside className="sidebar">
         {/* Stats */}
         <div className="stats">
           <div className="stat"><div className="stat-val red">{blockedCount}</div><div className="stat-label">Blocked</div></div>
-          <div className="stat"><div className="stat-val yellow">{approvalCount}</div><div className="stat-label">Approval</div></div>
+          <div className="stat"><div className="stat-val yellow">{approvalCount}</div><div className="stat-label">Pending</div></div>
           <div className="stat"><div className="stat-val green">{allowedCount}</div><div className="stat-label">Allowed</div></div>
         </div>
 
-        {/* Pending Approvals Panel */}
+        {/* Pending Approvals */}
         {pending.length > 0 && (
           <div className="panel">
             <div className="panel-header">
-              <span className="icon">⏳</span>
-              Pending Approvals
-              <span className="approval-badge" style={{ marginLeft: "auto" }}>{pending.length}</span>
+              ⏳ Pending Approvals
+              <span className="panel-header-count">{pending.length}</span>
             </div>
-            <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-              {pending.map((req) => (
-                <ApprovalCard
-                  key={req.request_id}
-                  req={req}
-                  onApprove={handleApproveRequest}
-                  onDeny={handleDenyRequest}
-                />
+            <div className="approval-panel-list">
+              {pending.map(req => (
+                <ApprovalCard key={req.request_id} req={req}
+                  onApprove={handleApproveRequest} onDeny={handleDenyRequest} />
               ))}
             </div>
           </div>
@@ -296,12 +260,17 @@ export default function App() {
 
         {/* Tool Policies */}
         <div className="panel">
-          <div className="panel-header"><span className="icon">⚙️</span> Tool Policies</div>
+          <div className="panel-header">
+            ⚙️ Tool Policies
+            <span className="panel-header-count">{toolNames.length}</span>
+          </div>
           <div className="tool-list">
             {toolNames.length === 0 && (
-              <div style={{ padding: "12px", color: "var(--muted)", fontSize: 13 }}>Loading tools…</div>
+              <div style={{ padding: "12px", color: "var(--muted)", fontSize: 12 }}>
+                Connecting to MCP servers…
+              </div>
             )}
-            {toolNames.map((name) => (
+            {toolNames.map(name => (
               <ToolRow key={name} name={name} status={getStatus(name)}
                 onBlock={handleBlock} onUnblock={handleUnblock}
                 onApprove={handleApprove} onUnapprove={handleUnapprove} />
@@ -311,18 +280,18 @@ export default function App() {
 
         {/* Legend */}
         <div className="panel">
-          <div className="panel-header"><span className="icon">📖</span> Legend</div>
-          <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="panel-header">📖 Legend</div>
+          <div className="legend-list">
             {[
-              ["🚫", "Blocked",  "Tool is completely forbidden"],
-              ["⏳", "Approval", "Requires human sign-off"],
-              ["✅", "Allowed",  "Tool executes freely"],
+              ["🚫", "Blocked",  "Tool completely forbidden — hard deny"],
+              ["⏳", "Approval", "Requires human sign-off before running"],
+              ["✅", "Allowed",  "Tool executes freely without restriction"],
             ].map(([icon, label, desc]) => (
-              <div key={label} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                <span style={{ fontSize: 15 }}>{icon}</span>
+              <div key={label} className="legend-item">
+                <span className="legend-icon">{icon}</span>
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
-                  <div style={{ fontSize: 11, color: "var(--muted)" }}>{desc}</div>
+                  <div className="legend-title">{label}</div>
+                  <div className="legend-desc">{desc}</div>
                 </div>
               </div>
             ))}
@@ -330,17 +299,18 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main */}
+      {/* ── Main ── */}
       <main className="main">
         <div className="tabs">
-          {["chat", "logs"].map((t) => (
-            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-              {t === "chat" ? "💬 Chat" : `📋 Activity Log (${logs.length})`}
-            </button>
-          ))}
+          <button className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>
+            💬 Chat
+          </button>
+          <button className={`tab ${tab === "logs" ? "active" : ""}`} onClick={() => setTab("logs")}>
+            📋 Activity Log {logs.length > 0 && `(${logs.length})`}
+          </button>
         </div>
 
-        {/* Chat Tab */}
+        {/* Chat */}
         {tab === "chat" && (
           <div className="chat-area">
             <div className="messages">
@@ -354,10 +324,15 @@ export default function App() {
                     <div className="msg-body">
                       <div className="msg-role">
                         {m.role === "user" ? "You" : m.role === "agent" ? "Guardian Agent" : "System"}
-                        {" · "}{m.ts}
+                        <span style={{ opacity: 0.5 }}>·</span>
+                        <span>{m.ts}</span>
                       </div>
                       <div className={`msg-content ${cls} ${m.role === "user" ? "user-msg" : ""}`}>
-                        {m.content}
+                        {m.role === "agent" ? (
+                          <ReactMarkdown>{m.content}</ReactMarkdown>
+                        ) : (
+                          m.content
+                        )}
                       </div>
                     </div>
                   </div>
@@ -369,8 +344,10 @@ export default function App() {
             <div className="chat-input-row">
               <textarea
                 className="chat-input" rows={1}
-                placeholder='Try "What time is it?" or "What is 5 plus 3?"'
-                value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKey}
+                placeholder='Try "Get info about microsoft/vscode" or "What time is it?"'
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKey}
               />
               <button className="btn btn-primary" onClick={handleSend} disabled={loading || !input.trim()}>
                 Send ↑
@@ -379,28 +356,26 @@ export default function App() {
           </div>
         )}
 
-        {/* Logs Tab */}
+        {/* Logs */}
         {tab === "logs" && (
           <div className="logs-area">
             {logs.length === 0 ? (
               <div className="empty-state">
                 <div className="icon">📋</div>
-                <p>No activity yet. Interact with the agent or change policies.</p>
+                <p>No activity yet — chat or change policies to see logs.</p>
               </div>
-            ) : (
-              logs.map((l, i) => (
-                <div key={i} className={`log-entry ${l.type}`}>
-                  <span className="log-time">{l.ts}</span>
-                  <span className="log-icon">{logIcon(l.type)}</span>
-                  <div className="log-text">
-                    <strong>[{l.type}]</strong>{" "}
-                    {l.action === "chat" || l.action === "pending" || l.action === "approved" || l.action === "denied"
-                      ? l.result
-                      : `${l.action.toUpperCase()} → ${l.tool}: ${l.result}`}
-                  </div>
+            ) : logs.map((l, i) => (
+              <div key={i} className={`log-entry ${l.type}`}>
+                <span className="log-time">{l.ts}</span>
+                <span className="log-icon">{logIcon(l.type)}</span>
+                <div className="log-text">
+                  <strong>[{l.type}]</strong>{" "}
+                  {l.action === "chat" || l.action === "pending" || l.action === "approved" || l.action === "denied"
+                    ? l.result
+                    : `${l.action.toUpperCase()} → ${l.tool}: ${l.result}`}
                 </div>
-              ))
-            )}
+              </div>
+            ))}
           </div>
         )}
       </main>
