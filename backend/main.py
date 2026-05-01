@@ -93,7 +93,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     history: list[dict[str, str]] = Field(default_factory=list)
-    model:   str = Field(default="google/gemini-2.5-flash")
+    model:   str = Field(default="google/gemini-2.5-flash-lite")
 
 
 class ChatResponse(BaseModel):
@@ -126,7 +126,14 @@ async def health() -> HealthResponse:
 async def list_tools() -> dict[str, Any]:
     """Live tools from MCP + hardcoded fallbacks."""
     mcp_tools = await registry.get_openai_tools()
-    all_tools = mcp_tools + HARDCODED_TOOL_DEFS
+    
+    hardcoded = []
+    for t in HARDCODED_TOOL_DEFS:
+        t_copy = dict(t)
+        t_copy["_server"] = "built-in"
+        hardcoded.append(t_copy)
+        
+    all_tools = mcp_tools + hardcoded
     return {"tools": all_tools, "count": len(all_tools), "mcp_count": len(mcp_tools)}
 
 
@@ -250,17 +257,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected error in agent loop")
+        # Check if it's an OpenAI API error to return gracefully
+        if "openai" in str(type(exc)).lower() and hasattr(exc, "status_code"):
+            error_msg = f"❌ AI Provider Error: HTTP {exc.status_code} - {getattr(exc, 'message', str(exc))}\n(Check your OpenRouter credits or API key)"
+            return ChatResponse(response=error_msg, model=req.model, pending_request_id=None)
         raise HTTPException(status_code=500, detail=f"Internal agent error: {exc}") from exc
-
-    # Parse approval sentinel
-    pending_request_id: str | None = None
-    sentinel_match = re.search(r"⏳__APPROVAL_PENDING__([\w-]+)__", answer)
-    if sentinel_match:
-        pending_request_id = sentinel_match.group(1)
-        answer = re.sub(r"⏳__APPROVAL_PENDING__[\w-]+__\s*", "⏳ ", answer).strip()
 
     return ChatResponse(
         response           = answer,
         model              = req.model,
-        pending_request_id = pending_request_id,
+        pending_request_id = None,
     )

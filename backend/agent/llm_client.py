@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL       = "google/gemini-2.5-flash"
+DEFAULT_MODEL       = "google/gemini-2.5-flash-lite"
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ async def call_llm(
     messages: list[dict[str, Any]],
     tools:    list[dict[str, Any]] | None = None,
     model:    str = DEFAULT_MODEL,
+    tool_choice: str | dict | None = None,
 ) -> ChatCompletion:
     """
     Async call to the OpenRouter API.
@@ -47,6 +48,7 @@ async def call_llm(
         messages: Conversation history in OpenAI format.
         tools:    OpenAI tool definitions (optional).
         model:    OpenRouter model string.
+        tool_choice: 'auto', 'required', or a specific function dict.
 
     Returns:
         ChatCompletion response object.
@@ -56,12 +58,15 @@ async def call_llm(
     kwargs: dict[str, Any] = {
         "model":      model,
         "messages":   messages,
-        "max_tokens": 1024,
+        "max_tokens": 540,
     }
 
     if tools:
-        kwargs["tools"]       = tools
-        kwargs["tool_choice"] = "auto"
+        kwargs["tools"] = tools
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
+        else:
+            kwargs["tool_choice"] = "auto"
 
     logger.debug(
         "→ LLM | model=%s | msgs=%d | tools=%d",

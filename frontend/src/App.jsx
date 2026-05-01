@@ -95,7 +95,7 @@ function ApprovalCard({ req, onApprove, onDeny }) {
 
 export default function App() {
   const [rules, setRules]         = useState({ blocked_tools: [], approval_tools: [] });
-  const [toolNames, setToolNames] = useState([]);
+  const [toolsList, setToolsList] = useState([]);
   const [pending, setPending]     = useState([]);
   const [directories, setDirectories] = useState([]);
   const [dirInput, setDirInput]       = useState("");
@@ -123,7 +123,7 @@ export default function App() {
         getRules(), getTools(), getPendingApprovals(), getDirectories()
       ]);
       setRules(rulesRes.data);
-      setToolNames(toolsRes.data.tools.map((t) => t.function.name));
+      setToolsList(toolsRes.data.tools.map(t => ({ name: t.function.name, server: t._server || "unknown" })));
       setPending(pendingRes.data.pending || []);
       setDirectories(dirsRes.data.directories || []);
       setLastSync(nowStr());
@@ -156,6 +156,17 @@ export default function App() {
   const handleUnblock   = async (n) => { await unblockTool(n);   fetchAll(); addLog("ALLOWED",  n, "unblock",   `'${n}' is now allowed`); };
   const handleApprove   = async (n) => { await approveTool(n);   fetchAll(); addLog("APPROVAL", n, "approve",   `'${n}' requires approval`); };
   const handleUnapprove = async (n) => { await unapproveTool(n); fetchAll(); addLog("ALLOWED",  n, "unapprove", `Approval removed for '${n}'`); };
+
+  const handleBulkAction = async (server, action) => {
+    const serverTools = toolsList.filter(t => t.server === server).map(t => t.name);
+    for (const t of serverTools) {
+      if (action === "block") await blockTool(t);
+      else if (action === "approve") await approveTool(t);
+      else if (action === "allow") { await unblockTool(t); await unapproveTool(t); }
+    }
+    fetchAll();
+    addLog(action === "allow" ? "ALLOWED" : action === "block" ? "BLOCKED" : "APPROVAL", server, "bulk-" + action, `Bulk ${action} for ${server}`);
+  };
 
   // ── Approval actions ──────────────────────────────────────────────────────────
 
@@ -235,7 +246,14 @@ export default function App() {
 
   const blockedCount  = rules.blocked_tools.length;
   const approvalCount = rules.approval_tools.length;
-  const allowedCount  = Math.max(0, toolNames.length - blockedCount - approvalCount);
+  const allowedCount  = Math.max(0, toolsList.length - blockedCount - approvalCount);
+
+  // Group tools by server
+  const groupedTools = toolsList.reduce((acc, t) => {
+    if (!acc[t.server]) acc[t.server] = [];
+    acc[t.server].push(t.name);
+    return acc;
+  }, {});
 
   const logIcon = (t) => t === "BLOCKED" ? "🚫" : t === "APPROVAL" ? "⏳" : "✅";
 
@@ -329,18 +347,30 @@ export default function App() {
         <div className="panel">
           <div className="panel-header">
             ⚙️ Tool Policies
-            <span className="panel-header-count">{toolNames.length}</span>
+            <span className="panel-header-count">{toolsList.length}</span>
           </div>
           <div className="tool-list">
-            {toolNames.length === 0 && (
+            {toolsList.length === 0 && (
               <div style={{ padding: "12px", color: "var(--muted)", fontSize: 12 }}>
                 Connecting to MCP servers…
               </div>
             )}
-            {toolNames.map(name => (
-              <ToolRow key={name} name={name} status={getStatus(name)}
-                onBlock={handleBlock} onUnblock={handleUnblock}
-                onApprove={handleApprove} onUnapprove={handleUnapprove} />
+            {Object.entries(groupedTools).map(([server, tNames]) => (
+              <div key={server} style={{ marginBottom: "16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(0,0,0,0.3)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+                  <strong style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--primary)" }}>{server} Server</strong>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button onClick={() => handleBulkAction(server, "allow")} className="btn-approve" style={{ padding: "2px 6px", fontSize: "10px" }}>Allow All</button>
+                    <button onClick={() => handleBulkAction(server, "approve")} className="btn-approve" style={{ background: "var(--yellow)", color: "#000", padding: "2px 6px", fontSize: "10px" }}>Approve All</button>
+                    <button onClick={() => handleBulkAction(server, "block")} className="btn-deny" style={{ padding: "2px 6px", fontSize: "10px" }}>Block All</button>
+                  </div>
+                </div>
+                {tNames.map(name => (
+                  <ToolRow key={name} name={name} status={getStatus(name)}
+                    onBlock={handleBlock} onUnblock={handleUnblock}
+                    onApprove={handleApprove} onUnapprove={handleUnapprove} />
+                ))}
+              </div>
             ))}
           </div>
         </div>

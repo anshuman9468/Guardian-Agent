@@ -178,7 +178,9 @@ class MCPServerRegistry:
                 continue
             try:
                 for tool in await client.list_tools():
-                    openai_tools.append(_mcp_to_openai(tool))
+                    schema = _mcp_to_openai(tool)
+                    schema["_server"] = client.name
+                    openai_tools.append(schema)
             except Exception as exc:
                 logger.warning("Tool discovery failed for '%s': %s", client.name, exc)
         return openai_tools
