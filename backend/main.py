@@ -223,9 +223,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
     """Send a message. The agent uses live MCP tools, gated by the policy engine."""
     logger.info("POST /chat | model=%s | msg=%r", req.model, req.message[:80])
 
-    # Live tools: MCP first, hardcoded as fallback
-    mcp_tools     = await registry.get_openai_tools()
-    all_tools     = mcp_tools + HARDCODED_TOOL_DEFS
+    # Use the tools defined in tools.py directly for the LLM
+    # (Do not append metadata like '_server' here, or OpenRouter's strict JSON schema validation will reject the payload)
+    all_tools = list(HARDCODED_TOOL_DEFS)
 
     try:
         answer = await run_agent(
