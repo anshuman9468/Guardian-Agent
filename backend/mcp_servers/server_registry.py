@@ -71,51 +71,7 @@ def _build_server_configs() -> list[MCPServerConfig]:
             enabled = os.getenv("MCP_FETCH_ENABLED", "true").lower() == "true",
         ),
 
-        # ── 3. GitHub Analyzer MCP (custom Python server) ─────────────────────
-        MCPServerConfig(
-            name    = "github",
-            command = "http://127.0.0.1:8001/sse",
-            args    = [],
-            enabled = os.getenv("MCP_GITHUB_ENABLED", "true").lower() == "true",
-        ),
-
-        # ── 4. SQLite Notes MCP (custom Python server) ────────────────────────
-        MCPServerConfig(
-            name    = "sqlite",
-            command = "http://127.0.0.1:8002/sse",
-            args    = [],
-            enabled = os.getenv("MCP_SQLITE_ENABLED", "true").lower() == "true",
-        ),
     ]
-
-def start_mcp_servers():
-    """Spawn the custom python MCP servers as detached background processes."""
-    import subprocess
-    import time
-    processes = []
-    _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    
-    if os.getenv("MCP_GITHUB_ENABLED", "true").lower() == "true":
-        env = os.environ.copy()
-        env["PYTHONPATH"] = _backend_dir
-        logger.info("Spawning detached github MCP server on port 8001")
-        processes.append(
-            subprocess.Popen(["python", "custom_mcp/github_server.py"], env=env, cwd=_backend_dir)
-        )
-
-    if os.getenv("MCP_SQLITE_ENABLED", "true").lower() == "true":
-        env = os.environ.copy()
-        env["PYTHONPATH"] = _backend_dir
-        logger.info("Spawning detached sqlite MCP server on port 8002")
-        processes.append(
-            subprocess.Popen(["python", "custom_mcp/sqlite_server.py"], env=env, cwd=_backend_dir)
-        )
-        
-    # Give them a second to bind to their ports before we try to connect
-    if processes:
-        time.sleep(2)
-        
-    return processes
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -137,7 +93,6 @@ class MCPServerRegistry:
 
     async def startup(self) -> None:
         """Connect to all enabled MCP servers. Called from FastAPI lifespan."""
-        self._background_processes = start_mcp_servers()
         
         configs = _build_server_configs()
         for cfg in configs:
@@ -173,14 +128,6 @@ class MCPServerRegistry:
                 logger.warning("Error disconnecting '%s': %s", client.name, exc)
         self._clients.clear()
         self._tool_map.clear()
-        
-        # Terminate the background processes spawned by start_mcp_servers
-        if hasattr(self, "_background_processes"):
-            for p in self._background_processes:
-                try:
-                    p.terminate()
-                except Exception:
-                    pass
 
     async def _refresh_tool_map(self) -> None:
         """Rebuild the tool_name → client mapping from all live servers."""

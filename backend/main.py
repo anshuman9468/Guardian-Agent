@@ -130,7 +130,7 @@ async def list_tools() -> dict[str, Any]:
     hardcoded = []
     for t in HARDCODED_TOOL_DEFS:
         t_copy = dict(t)
-        t_copy["_server"] = "built-in"
+        t_copy["_server"] = t.get("_server", "built-in")
         hardcoded.append(t_copy)
         
     all_tools = mcp_tools + hardcoded
