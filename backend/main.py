@@ -34,45 +34,32 @@ logger = logging.getLogger(__name__)
 from agent.agent_loop import run_agent
 from agent.tools import TOOL_DEFINITIONS as HARDCODED_TOOL_DEFS
 from agent.tools import tool_executor as hardcoded_executor
-from mcp_servers.server_registry import registry
+from mcp_servers.server_registry import MCP_SERVERS
 from policy import approval_store, rule_store
 
 
-# ── Async tool executor (MCP first, hardcoded fallback) ───────────────────────
+# ── Async tool executor ───────────────────────────────────────────────────────
 
 async def unified_tool_executor(tool_name: str, args: dict[str, Any]) -> str:
-    """
-    Execute a tool:
-      1. Try MCP registry first (live, dynamic).
-      2. Fall back to hardcoded tools if MCP doesn't have it.
-    """
-    if registry.has_tool(tool_name):
-        logger.info("Routing to MCP | tool=%s", tool_name)
-        return await registry.call_tool(tool_name, args)
-
-    logger.info("Routing to hardcoded fallback | tool=%s", tool_name)
-    return hardcoded_executor(tool_name, args)
+    """Execute a tool using the HTTP services defined in tools.py."""
+    logger.info("Routing to tool handler | tool=%s", tool_name)
+    return await hardcoded_executor(tool_name, args)
 
 
-# ── FastAPI lifespan (MCP connect/disconnect) ─────────────────────────────────
+# ── FastAPI lifespan ──────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up — connecting to MCP servers…")
-    try:
-        await registry.startup()
-    except Exception as exc:
-        logger.error("MCP startup error (continuing without MCP): %s", exc)
+    logger.info("Starting up Guardian Agent Backend")
     yield
-    logger.info("Shutting down — disconnecting MCP servers…")
-    await registry.shutdown()
+    logger.info("Shutting down Guardian Agent Backend")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title       = "Guardian Agent",
-    description = "Guarded AI agent with live MCP tool discovery and policy enforcement.",
+    description = "Guarded AI agent with external HTTP services and policy enforcement.",
     version     = "0.2.0",
     docs_url    = "/docs",
     redoc_url   = "/redoc",
@@ -124,23 +111,20 @@ async def health() -> HealthResponse:
 
 @app.get("/tools", tags=["Meta"])
 async def list_tools() -> dict[str, Any]:
-    """Live tools from MCP + hardcoded fallbacks."""
-    mcp_tools = await registry.get_openai_tools()
-    
-    hardcoded = []
+    """Tools available from all microservices."""
+    all_tools = []
     for t in HARDCODED_TOOL_DEFS:
         t_copy = dict(t)
         t_copy["_server"] = t.get("_server", "built-in")
-        hardcoded.append(t_copy)
+        all_tools.append(t_copy)
         
-    all_tools = mcp_tools + hardcoded
-    return {"tools": all_tools, "count": len(all_tools), "mcp_count": len(mcp_tools)}
+    return {"tools": all_tools, "count": len(all_tools), "mcp_count": len(all_tools)}
 
 
 @app.get("/mcp/status", tags=["Meta"])
 async def mcp_status() -> dict[str, Any]:
-    """Show which MCP servers are connected and what tools they expose."""
-    return registry.status()
+    """Show HTTP MCP services."""
+    return {"connected": True, "servers": list(MCP_SERVERS.keys()), "registry_type": "http"}
 
 
 # ── Policy endpoints ──────────────────────────────────────────────────────────
