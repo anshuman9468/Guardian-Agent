@@ -104,6 +104,10 @@ class ApproveRequest(BaseModel):
 
 # ── Meta endpoints ────────────────────────────────────────────────────────────
 
+@app.get("/", tags=["Meta"])
+async def root() -> dict[str, str]:
+    return {"message": "Guardian Agent Backend is running successfully!"}
+
 @app.get("/health", response_model=HealthResponse, tags=["Meta"])
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", version=app.version)
