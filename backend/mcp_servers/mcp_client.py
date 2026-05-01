@@ -53,15 +53,24 @@ class MCPClient:
             env=self.env,
         )
         try:
-            read, write = await self._exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
+            if self.command.startswith("http"):
+                from mcp.client.sse import sse_client
+                read, write = await self._exit_stack.enter_async_context(
+                    sse_client(self.command)
+                )
+                logger.info("MCP connecting via SSE | url=%s", self.command)
+            else:
+                read, write = await self._exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
+                logger.info("MCP connecting via STDIO | cmd=%s %s", self.command, self.args)
+
             self._session = await self._exit_stack.enter_async_context(
                 ClientSession(read, write)
             )
             await self._session.initialize()
             self.connected = True
-            logger.info("MCP connected | server=%s | cmd=%s %s", self.name, self.command, self.args)
+            logger.info("MCP connected successfully | server=%s", self.name)
         except Exception as exc:
             self.connected = False
             logger.error("MCP connect failed | server=%s | error=%s", self.name, exc)

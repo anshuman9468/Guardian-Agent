@@ -212,4 +212,4 @@ async def search_repos(query: str, limit: int = 5) -> str:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="sse", port=8001)
