@@ -14,7 +14,7 @@ BASE_DIR = "/opt/render/project/src"
 def is_safe_path(path):
     return os.path.abspath(path).startswith(BASE_DIR)
 
-@app.get("/read_file")
+@app.get("/filesystem/read")
 def read_file(path: str):
     if not is_safe_path(path):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -40,28 +40,28 @@ async def fetch(url: str):
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 github_headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
 
-@app.get("/repo")
+@app.get("/github/repo")
 async def get_repo(owner: str, repo: str):
     url = f"https://api.github.com/repos/{owner}/{repo}"
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=github_headers)
         return res.json()
 
-@app.get("/issues")
+@app.get("/github/issues")
 async def get_issues(owner: str, repo: str, limit: int = 5):
     url = f"https://api.github.com/repos/{owner}/{repo}/issues?per_page={limit}"
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=github_headers)
         return res.json()
 
-@app.get("/languages")
+@app.get("/github/languages")
 async def get_languages(owner: str, repo: str):
     url = f"https://api.github.com/repos/{owner}/{repo}/languages"
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=github_headers)
         return res.json()
 
-@app.get("/search")
+@app.get("/github/search")
 async def search_repos(query: str, limit: int = 5):
     url = f"https://api.github.com/search/repositories?q={query}&per_page={limit}"
     async with httpx.AsyncClient() as client:
@@ -88,14 +88,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize on startup
 init_db()
 
 class NoteCreate(BaseModel):
     title: str
     content: str
 
-@app.post("/notes/create")
+@app.post("/sqlite/notes/create")
 def create_note(note: NoteCreate):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -111,7 +110,7 @@ def create_note(note: NoteCreate):
     finally:
         conn.close()
 
-@app.get("/notes/read")
+@app.get("/sqlite/notes/read")
 def read_note(title: str):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -123,7 +122,7 @@ def read_note(title: str):
         return {"text": row["content"]}
     return {"error": "Note not found."}
 
-@app.get("/notes/list")
+@app.get("/sqlite/notes/list")
 def list_notes():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -133,7 +132,7 @@ def list_notes():
     conn.close()
     return {"text": "\n".join([r["title"] for r in rows]) if rows else "No notes found."}
 
-@app.get("/notes/search")
+@app.get("/sqlite/notes/search")
 def search_notes(keyword: str):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -143,7 +142,7 @@ def search_notes(keyword: str):
     conn.close()
     return {"text": "\n".join([r["title"] for r in rows]) if rows else "No matching notes."}
 
-@app.delete("/notes/delete")
+@app.delete("/sqlite/notes/delete")
 def delete_note(title: str):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()

@@ -278,7 +278,7 @@ async def _handle_add_numbers(args: dict[str, Any]) -> str:
 
 # Filesystem
 async def _handle_read_file(args: dict[str, Any]) -> str:
-    return await _call_http_tool("filesystem", "/read_file", params={"path": args["path"]})
+    return await _call_http_tool("filesystem", "/filesystem/read", params={"path": args["path"]})
 
 # Fetch
 async def _handle_fetch(args: dict[str, Any]) -> str:
@@ -286,32 +286,32 @@ async def _handle_fetch(args: dict[str, Any]) -> str:
 
 # GitHub
 async def _handle_get_repo_info(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/repo", params={"owner": args["owner"], "repo": args["repo"]})
+    return await _call_http_tool("github", "/github/repo", params={"owner": args["owner"], "repo": args["repo"]})
 
 async def _handle_list_open_issues(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/issues", params={"owner": args["owner"], "repo": args["repo"], "limit": args.get("limit", 5)})
+    return await _call_http_tool("github", "/github/issues", params={"owner": args["owner"], "repo": args["repo"], "limit": args.get("limit", 5)})
 
 async def _handle_get_repo_languages(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/languages", params={"owner": args["owner"], "repo": args["repo"]})
+    return await _call_http_tool("github", "/github/languages", params={"owner": args["owner"], "repo": args["repo"]})
 
 async def _handle_search_repos(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/search", params={"query": args["query"], "limit": args.get("limit", 5)})
+    return await _call_http_tool("github", "/github/search", params={"query": args["query"], "limit": args.get("limit", 5)})
 
 # SQLite
 async def _handle_create_note(args: dict[str, Any]) -> str:
-    return await _call_http_tool("sqlite", "/notes/create", method="POST", json_data={"title": args["title"], "content": args["content"]})
+    return await _call_http_tool("sqlite", "/sqlite/notes/create", method="POST", json_data={"title": args["title"], "content": args["content"]})
 
 async def _handle_read_note(args: dict[str, Any]) -> str:
-    return await _call_http_tool("sqlite", "/notes/read", params={"title": args["title"]})
+    return await _call_http_tool("sqlite", "/sqlite/notes/read", params={"title": args["title"]})
 
 async def _handle_search_notes(args: dict[str, Any]) -> str:
-    return await _call_http_tool("sqlite", "/notes/search", params={"keyword": args["keyword"]})
+    return await _call_http_tool("sqlite", "/sqlite/notes/search", params={"keyword": args["keyword"]})
 
 async def _handle_list_notes(args: dict[str, Any]) -> str:
-    return await _call_http_tool("sqlite", "/notes/list")
+    return await _call_http_tool("sqlite", "/sqlite/notes/list")
 
 async def _handle_delete_note(args: dict[str, Any]) -> str:
-    return await _call_http_tool("sqlite", "/notes/delete", method="DELETE", params={"title": args["title"]})
+    return await _call_http_tool("sqlite", "/sqlite/notes/delete", method="DELETE", params={"title": args["title"]})
 
 
 _TOOL_HANDLERS: dict[str, Any] = {
