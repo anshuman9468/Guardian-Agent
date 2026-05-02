@@ -10,11 +10,48 @@ from __future__ import annotations
 import datetime
 import logging
 import httpx
+import os
 from typing import Any
 
 from mcp_servers.server_registry import MCP_SERVERS
 
 logger = logging.getLogger(__name__)
+
+# ─── GitHub direct API (avoid flaky external MCP) ─────────────────────────────
+
+GITHUB_API = "https://api.github.com"
+
+
+def _github_headers() -> dict[str, str]:
+    h = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "GuardianAgent/1.0",
+    }
+    token = (os.getenv("GITHUB_TOKEN") or "").strip()
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+async def _github_get(path: str, params: dict[str, Any] | None = None) -> httpx.Response:
+    url = f"{GITHUB_API}{path}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        return await client.get(url, headers=_github_headers(), params=params)
+
+
+def _format_open_issues(owner: str, repo: str, issues: list[dict[str, Any]]) -> str:
+    if not issues:
+        return f"✅ No open issues found in `{owner}/{repo}`."
+
+    lines = [f"Open issues in `{owner}/{repo}` (showing {len(issues)}):"]
+    for i, issue in enumerate(issues, 1):
+        labels = issue.get("labels") or []
+        label_names = [l.get("name") for l in labels if isinstance(l, dict) and l.get("name")]
+        label_str = ", ".join(label_names) if label_names else "none"
+        url = issue.get("html_url", "")
+        lines.append(f"{i}. #{issue.get('number')} — {issue.get('title')}\n   labels: {label_str}\n   url: {url}")
+    return "\n".join(lines)
 
 # ─── Tool definitions (OpenAI function-calling schema) ───────────────────────
 
@@ -247,7 +284,12 @@ async def _call_http_tool(server: str, endpoint: str, method: str = "GET", param
                 try:
                     return str(res.json())
                 except:
-                    return f"HTTP {res.status_code}: {res.text}"
+                    # Never dump raw HTML into the agent chat.
+                    content_type = (res.headers.get("content-type") or "").lower()
+                    body = res.text or ""
+                    if "text/html" in content_type or body.lstrip().lower().startswith("<!doctype html") or body.lstrip().lower().startswith("<html"):
+                        return f"HTTP {res.status_code}: upstream service returned HTML (unavailable)."
+                    return f"HTTP {res.status_code}: {body[:5000]}"
             
             data = res.json()
             # Try to return 'text' or 'content' if it's a dict, else return the whole thing
@@ -286,16 +328,80 @@ async def _handle_fetch(args: dict[str, Any]) -> str:
 
 # GitHub
 async def _handle_get_repo_info(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/github/repo", params={"owner": args["owner"], "repo": args["repo"]})
+    owner = args["owner"]
+    repo = args["repo"]
+    r = await _github_get(f"/repos/{owner}/{repo}")
+    if r.status_code == 404:
+        return f"Error: Repository `{owner}/{repo}` not found."
+    if r.status_code == 403:
+        return "Error: GitHub rate limit reached. Set `GITHUB_TOKEN`."
+    r.raise_for_status()
+    d = r.json()
+    return (
+        f"{d.get('full_name')}\n"
+        f"- description: {d.get('description') or 'N/A'}\n"
+        f"- language: {d.get('language') or 'N/A'}\n"
+        f"- stars: {d.get('stargazers_count')}\n"
+        f"- forks: {d.get('forks_count')}\n"
+        f"- open_issues_count: {d.get('open_issues_count')}\n"
+        f"- url: {d.get('html_url')}"
+    )
 
 async def _handle_list_open_issues(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/github/issues", params={"owner": args["owner"], "repo": args["repo"], "limit": args.get("limit", 5)})
+    owner = args["owner"]
+    repo = args["repo"]
+    limit = int(args.get("limit", 5) or 5)
+    limit = min(max(limit, 1), 10)
+
+    r = await _github_get(
+        f"/repos/{owner}/{repo}/issues",
+        params={"state": "open", "per_page": 30, "sort": "created", "direction": "desc"},
+    )
+    if r.status_code == 404:
+        return f"Error: Repository `{owner}/{repo}` not found."
+    if r.status_code == 403:
+        return "Error: GitHub rate limit reached. Set `GITHUB_TOKEN`."
+    r.raise_for_status()
+
+    raw = r.json()
+    issues = [i for i in raw if isinstance(i, dict) and "pull_request" not in i][:limit]
+    return _format_open_issues(owner, repo, issues)
 
 async def _handle_get_repo_languages(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/github/languages", params={"owner": args["owner"], "repo": args["repo"]})
+    owner = args["owner"]
+    repo = args["repo"]
+    r = await _github_get(f"/repos/{owner}/{repo}/languages")
+    if r.status_code == 404:
+        return f"Error: Repository `{owner}/{repo}` not found."
+    if r.status_code == 403:
+        return "Error: GitHub rate limit reached. Set `GITHUB_TOKEN`."
+    r.raise_for_status()
+    langs = r.json() or {}
+    if not langs:
+        return f"No language data available for `{owner}/{repo}`."
+    total = sum(langs.values()) or 1
+    lines = [f"Language breakdown for `{owner}/{repo}`:"]
+    for lang, count in sorted(langs.items(), key=lambda x: -x[1]):
+        pct = count / total * 100
+        lines.append(f"- {lang}: {pct:.1f}%")
+    return "\n".join(lines)
 
 async def _handle_search_repos(args: dict[str, Any]) -> str:
-    return await _call_http_tool("github", "/github/search", params={"query": args["query"], "limit": args.get("limit", 5)})
+    query = args["query"]
+    limit = int(args.get("limit", 5) or 5)
+    limit = min(max(limit, 1), 10)
+    r = await _github_get("/search/repositories", params={"q": query, "sort": "stars", "order": "desc", "per_page": limit})
+    if r.status_code == 403:
+        return "Error: GitHub rate limit reached. Set `GITHUB_TOKEN`."
+    r.raise_for_status()
+    data = r.json() or {}
+    items = data.get("items") or []
+    if not items:
+        return f"No repositories found for query: `{query}`"
+    lines = [f"GitHub search `{query}` (showing {min(limit, len(items))}):"]
+    for i, repo in enumerate(items[:limit], 1):
+        lines.append(f"{i}. {repo.get('full_name')} — ⭐ {repo.get('stargazers_count')} — {repo.get('html_url')}")
+    return "\n".join(lines)
 
 # SQLite
 async def _handle_create_note(args: dict[str, Any]) -> str:
