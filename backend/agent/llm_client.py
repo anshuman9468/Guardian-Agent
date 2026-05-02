@@ -46,9 +46,10 @@ async def call_llm(
     logger.info("Calling OpenRouter | model=%s", target_model)
     
     kwargs: dict[str, Any] = {
-        "model":      target_model,
-        "messages":   messages,
-        "max_tokens": 1500
+        "model":       target_model,
+        "messages":    messages,
+        "max_tokens":  80,
+        "temperature": 0.5
     }
     
     if tools:
@@ -60,3 +61,4 @@ async def call_llm(
     except Exception as e:
         logger.error(f"OpenRouter API call failed: {e}")
         raise e
+
