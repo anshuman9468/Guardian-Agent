@@ -246,17 +246,27 @@ async def chat(req: ChatRequest) -> ChatResponse:
             tool_executor = unified_tool_executor,
             model         = req.model,
         )
-    except EnvironmentError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except (EnvironmentError, RuntimeError) as exc:
+        # These are handled errors like "Missing API Key" or "Provider failed"
+        logger.error(f"Agent error: {exc}")
+        return ChatResponse(
+            response=f"🛑 **Backend Error:** {exc}",
+            model=req.model,
+            pending_request_id=None
+        )
     except Exception as exc:
         logger.exception("Unexpected error in agent loop")
         # Check if it's an OpenAI API error to return gracefully
-        if "openai" in str(type(exc)).lower() and hasattr(exc, "status_code"):
-            error_msg = f"❌ AI Provider Error: HTTP {exc.status_code} - {getattr(exc, 'message', str(exc))}\n(Check your OpenRouter credits or API key)"
+        if "openai" in str(type(exc)).lower():
+            error_msg = f"❌ AI Provider Error: {exc}\n(Check your OpenRouter credits or API key)"
             return ChatResponse(response=error_msg, model=req.model, pending_request_id=None)
-        raise HTTPException(status_code=500, detail=f"Internal agent error: {exc}") from exc
+        
+        # Fallback for truly unknown crashes
+        return ChatResponse(
+            response=f"⚠️ **Unexpected Error:** {exc}",
+            model=req.model,
+            pending_request_id=None
+        )
 
     return ChatResponse(
         response           = answer,

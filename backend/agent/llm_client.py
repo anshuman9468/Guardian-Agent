@@ -10,8 +10,8 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 GEMINI_BASE_URL     = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Default Models
-OR_MODEL      = "google/gemini-2.5-flash-lite"
-GEMINI_MODEL  = "gemini-2.5-flash-lite"
+OR_MODEL      = "google/gemini-2.0-flash-lite"
+GEMINI_MODEL  = "gemini-2.0-flash-lite"
 DEFAULT_MODEL = OR_MODEL
 
 logger = logging.getLogger(__name__)
@@ -51,11 +51,12 @@ async def call_llm(
     # 1. Try OpenRouter First (if key exists)
     if or_client:
         try:
-            logger.info("Attempting primary LLM call (OpenRouter)")
+            target_model = model or OR_MODEL
+            logger.info("Attempting primary LLM call (OpenRouter) | model=%s", target_model)
             kwargs: dict[str, Any] = {
-                "model":      model or OR_MODEL,
+                "model":      target_model,
                 "messages":   messages,
-                "max_tokens": 540,
+                "max_tokens": 800,
             }
             if tools:
                 kwargs["tools"] = tools
@@ -70,10 +71,17 @@ async def call_llm(
     if gemini_client:
         logger.info("Attempting fallback LLM call (Google Gemini)")
         try:
+            # Strip OpenRouter provider prefix if present
+            safe_gemini_model = GEMINI_MODEL
+            if model and "/" in model:
+                # "google/gemini-flash-1.5" -> "gemini-1.5-flash"
+                temp = model.split("/")[-1]
+                if "gemini" in temp: safe_gemini_model = temp
+
             kwargs: dict[str, Any] = {
-                "model":      GEMINI_MODEL, # Gemini uses its own model IDs
+                "model":      safe_gemini_model,
                 "messages":   messages,
-                "max_tokens": 1000, # Gemini allows more tokens
+                "max_tokens": 1000,
             }
             if tools:
                 kwargs["tools"] = tools
@@ -84,4 +92,4 @@ async def call_llm(
             logger.error(f"Gemini fallback also failed: {e}")
             raise e
 
-    raise EnvironmentError("No valid LLM API keys found (OpenRouter or Gemini).")
+    raise EnvironmentError("No valid LLM API keys found. Please set OPENROUTER_API_KEY or GEMINI_API_KEY in Render environment variables.")
