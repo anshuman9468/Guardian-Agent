@@ -64,11 +64,29 @@ async def call_llm(messages, tools=None, model=None, tool_choice=None):
     target_model = model or DEFAULT_MODEL
     if "/" in target_model: target_model = target_model.split("/")[-1]
 
+    # 1. Wrap the last message in the Strict Rules template
+    if messages and messages[-1]["role"] == "user":
+        orig = messages[-1]["content"]
+        messages[-1]["content"] = f"""
+You are an AI assistant. Your task is to provide clean, structured, and final answers only.
+
+STRICT RULES:
+1. Do NOT explain your reasoning.
+2. Do NOT include thinking steps.
+3. Do NOT include unnecessary text.
+4. Do NOT repeat the question.
+5. Output must be concise and directly usable.
+
+USER INPUT:
+{orig}
+"""
+
     config = types.GenerateContentConfig(
         tools=_map_tools(tools),
-        temperature=0.5,
+        temperature=0.3,
         max_output_tokens=1000,
-        system_instruction=[types.Part(text="You are a helpful assistant with access to tools.")]
+        system_instruction=[types.Part(text="""You are a professional AI assistant. 
+Follow strict rules: No reasoning, No extra text. Provide clean, final answers in structured format (bullet points or numbered steps).""")]
     )
 
     try:
