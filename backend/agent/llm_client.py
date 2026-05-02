@@ -5,30 +5,29 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-GEMINI_BASE_URL     = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-# Models
-OR_MODEL      = "google/gemini-2.5-flash-lite"   # OpenRouter
-GEMINI_MODEL  = "gemini-1.5-flash"               # Google direct
-DEFAULT_MODEL = OR_MODEL
+BASE_URL = "https://openrouter.ai/api/v1"
+MODEL    = "google/gemini-2.5-flash"
+DEFAULT_MODEL = MODEL
 
 logger = logging.getLogger(__name__)
 
-# ─── Clients ──────────────────────────────────────────────────────────────────
+# ─── OpenRouter Client ────────────────────────────────────────────────────────
 
-def _get_or_client() -> AsyncOpenAI | None:
+def _get_client() -> AsyncOpenAI | None:
     key = os.getenv("OPENROUTER_API_KEY")
-    if not key: return None
-    return AsyncOpenAI(api_key=key, base_url=OPENROUTER_BASE_URL)
+    if not key:
+        return None
+        
+    return AsyncOpenAI(
+        api_key=key,
+        base_url=BASE_URL,
+        default_headers={
+            "HTTP-Referer": "https://guardian-agent-ten.vercel.app", # Updated to your Vercel URL
+            "X-Title": "Guardian Agent"
+        }
+    )
 
-def _get_gemini_client() -> AsyncOpenAI | None:
-    # Check for both GOOGLE_API_KEY (as requested) and GEMINI_API_KEY
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not key: return None
-    return AsyncOpenAI(api_key=key, base_url=GEMINI_BASE_URL)
-
-# ─── Core LLM Call with Fallback ─────────────────────────────────────────────
+# ─── Core LLM Call ────────────────────────────────────────────────────────────
 
 async def call_llm(
     messages: list[dict[str, Any]],
@@ -37,51 +36,27 @@ async def call_llm(
     tool_choice: str | dict | None = None,
 ) -> ChatCompletion:
     """
-    Production-level LLM caller:
-    - Primary: OpenRouter
-    - Fallback: Google Gemini Direct
+    OpenRouter-exclusive LLM caller with required headers.
     """
-    or_client = _get_or_client()
-    gemini_client = _get_gemini_client()
+    client = _get_client()
+    if not client:
+        raise EnvironmentError("OPENROUTER_API_KEY is not set in environment variables.")
 
-    # 1. 🔹 Primary: OpenRouter
-    if or_client:
-        try:
-            target_model = model or OR_MODEL
-            logger.info("Attempting Primary (OpenRouter) | model=%s", target_model)
-            
-            kwargs: dict[str, Any] = {
-                "model":      target_model,
-                "messages":   messages,
-                "max_tokens": 1500
-            }
-            if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_choice"] = tool_choice or "auto"
+    target_model = model or MODEL
+    logger.info("Calling OpenRouter | model=%s", target_model)
+    
+    kwargs: dict[str, Any] = {
+        "model":      target_model,
+        "messages":   messages,
+        "max_tokens": 1500
+    }
+    
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = tool_choice or "auto"
 
-            return await or_client.chat.completions.create(**kwargs)
-
-        except Exception as e:
-            logger.warning(f"OpenRouter failed → switching to Gemini fallback: {e}")
-
-    # 2. 🔹 Fallback: Google Gemini Direct
-    if gemini_client:
-        try:
-            logger.info("Attempting Fallback (Google Gemini) | model=%s", GEMINI_MODEL)
-            
-            kwargs: dict[str, Any] = {
-                "model":      GEMINI_MODEL,
-                "messages":   messages,
-                "max_tokens": 2000
-            }
-            if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_choice"] = tool_choice or "auto"
-
-            return await gemini_client.chat.completions.create(**kwargs)
-        except Exception as e:
-            logger.error(f"Fallback also failed: {e}")
-            raise e
-
-    # No keys found
-    raise EnvironmentError("No valid LLM API keys found (OPENROUTER_API_KEY or GOOGLE_API_KEY).")
+    try:
+        return await client.chat.completions.create(**kwargs)
+    except Exception as e:
+        logger.error(f"OpenRouter API call failed: {e}")
+        raise e
