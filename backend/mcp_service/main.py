@@ -32,7 +32,9 @@ async def fetch(url: str):
         url = "https://" + url
     async with httpx.AsyncClient() as client:
         res = await client.get(url)
-        return {"content": res.text}
+        # Limit to 15k characters to avoid token explosions
+        content = res.text[:15000]
+        return {"content": content}
 
 # ==========================================
 # 3. GITHUB SERVICE
@@ -45,14 +47,27 @@ async def get_repo(owner: str, repo: str):
     url = f"https://api.github.com/repos/{owner}/{repo}"
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=github_headers)
-        return res.json()
+        data = res.json()
+        if res.status_code != 200: return data
+        # Return only essential info
+        return {
+            "full_name": data.get("full_name"),
+            "description": data.get("description"),
+            "stars": data.get("stargazers_count"),
+            "forks": data.get("forks_count"),
+            "open_issues": data.get("open_issues_count"),
+            "language": data.get("language")
+        }
 
 @app.get("/github/issues")
 async def get_issues(owner: str, repo: str, limit: int = 5):
     url = f"https://api.github.com/repos/{owner}/{repo}/issues?per_page={limit}"
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=github_headers)
-        return res.json()
+        data = res.json()
+        if res.status_code != 200: return data
+        # Return only title and number to save tokens
+        return [{"number": i.get("number"), "title": i.get("title")} for i in data]
 
 @app.get("/github/languages")
 async def get_languages(owner: str, repo: str):
@@ -66,7 +81,17 @@ async def search_repos(query: str, limit: int = 5):
     url = f"https://api.github.com/search/repositories?q={query}&per_page={limit}"
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=github_headers)
-        return res.json()
+        data = res.json()
+        if res.status_code != 200: return data
+        # Return only essential info for search results
+        return [
+            {
+                "full_name": r.get("full_name"),
+                "description": r.get("description"),
+                "stars": r.get("stargazers_count")
+            }
+            for r in data.get("items", [])
+        ]
 
 # ==========================================
 # 4. SQLITE SERVICE

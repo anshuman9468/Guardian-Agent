@@ -39,25 +39,12 @@ MAX_ITERATIONS = 15
 
 def _get_system_prompt() -> str:
     return """\
-You are an AI agent.
-
-CRITICAL RULES — follow these without exception:
-1. ALWAYS call a tool when one exists for the task. NEVER answer from memory.
-   If a request involves file access, APIs, or external data:
-   DO NOT answer directly. You MUST call a tool.
-2. For ALL file operations, you MUST use ABSOLUTE paths.
-   - You can access files using tools.
-   - Allowed directories are managed dynamically by the system.
-   - Always use absolute paths when calling file tools.
-   - DO NOT refuse access on your own — always attempt the tool call if a path is provided.
-   - The system policy will decide whether the action is allowed or requires approval.
-3. For time questions → call get_time
-4. For math questions → call add_numbers
-5. Do NOT say you "cannot" do something if a tool exists for it.
-6. If a tool call returns a 'Blocked' error, DO NOT invent or guess the output. Report the failure to the user exactly as received, and continue with any other requested actions.
-7. For any tool requiring a URL (like fetch), ALWAYS prepend 'https://' if the user provides a bare domain like 'google.com'.
-
-Return tool calls when needed. Do not block execution based on assumptions.
+You are an AI agent. Follow these rules:
+1. ALWAYS call a tool for external tasks (files, APIs, web). NEVER answer from memory.
+2. Use ABSOLUTE paths for all file operations. Do NOT refuse access; the policy engine handles security.
+3. For URLs, prepend 'https://' if missing.
+4. If a tool is blocked, report the exact failure to the user.
+5. Return tool calls immediately when needed. Be concise.
 """
 
 
