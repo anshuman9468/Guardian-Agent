@@ -2,83 +2,66 @@ import logging
 import os
 import json
 from typing import Any
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-MODEL_NAME = "gemini-2.0-flash-lite-preview-02-05" 
-DEFAULT_MODEL = "gemini-2.5-flash-lite" 
+DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+OPENROUTER_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 
 logger = logging.getLogger(__name__)
 
 # ─── Client ───────────────────────────────────────────────────────────────────
 
 def _get_client():
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise EnvironmentError("GOOGLE_API_KEY is not set.")
-    return genai.Client(api_key=api_key)
+        raise EnvironmentError("OPENROUTER_API_KEY is not set.")
+    return AsyncOpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 # ─── Mappers ──────────────────────────────────────────────────────────────────
 
-def _map_messages(messages: list[dict[str, Any]]) -> list[types.Content]:
-    """Maps OpenAI messages (user, assistant, tool, system) to Gemini roles (user, model)."""
-    mapped = []
-    for m in messages:
+def _map_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Normalize messages into OpenAI-compatible shape for OpenRouter.
+    Keeps system/user/assistant/tool roles intact.
+    """
+    mapped: list[dict[str, Any]] = []
+    for m in messages or []:
         role = m.get("role", "user")
-        content = m.get("content", "")
+        msg: dict[str, Any] = {"role": role}
 
-        # Gemini only supports 'user' and 'model'
-        if role == "user":
-            gemini_role = "user"
-        else:
-            # assistant, tool, system -> model
-            gemini_role = "model"
-        
-        mapped.append(types.Content(
-            role=gemini_role, 
-            parts=[types.Part(text=str(content))]
-        ))
+        # Pass through tool call messages if present; otherwise content.
+        if "content" in m:
+            msg["content"] = m.get("content")
+        if role == "tool":
+            # OpenAI schema: tool messages should include tool_call_id
+            if "tool_call_id" in m:
+                msg["tool_call_id"] = m["tool_call_id"]
+            elif "name" in m:
+                # Some adapters send name instead; keep it as best-effort.
+                msg["name"] = m["name"]
+
+        # Some callers might attach tool_calls on assistant messages.
+        if role == "assistant" and "tool_calls" in m and m["tool_calls"] is not None:
+            msg["tool_calls"] = m["tool_calls"]
+
+        mapped.append(msg)
     return mapped
 
-def _map_tools(tools: list[dict[str, Any]]) -> list[types.Tool]:
-    if not tools: return None
-    declarations = [types.FunctionDeclaration(
-        name=t["function"]["name"],
-        description=t["function"].get("description", ""),
-        parameters=t["function"].get("parameters", {"type": "object", "properties": {}})
-    ) for t in tools]
-    return [types.Tool(function_declarations=declarations)]
-
-def _extract_text_from_response(response: Any) -> str:
+def _map_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
     """
-    Gemini responses are not reliably available on response.text.
-    Prefer candidates[0].content.parts[*].text and fall back safely.
+    Tools are expected in OpenAI format:
+    [{"type":"function","function":{"name","description","parameters"}}]
     """
-    try:
-        candidates = getattr(response, "candidates", None) or []
-        if not candidates:
-            return ""
-
-        content = getattr(candidates[0], "content", None)
-        parts = getattr(content, "parts", None) or []
-        texts: list[str] = []
-        for p in parts:
-            t = getattr(p, "text", None)
-            if isinstance(t, str) and t.strip():
-                texts.append(t.strip())
-        if texts:
-            return "\n".join(texts).strip()
-    except Exception:
-        # Intentionally swallow parsing errors; caller handles empty text.
-        return ""
-
-    # Last resort: some SDK versions expose response.text, but it's not consistent.
-    try:
-        t = getattr(response, "text", None)
-        return t.strip() if isinstance(t, str) and t.strip() else ""
-    except Exception:
-        return ""
+    if not tools:
+        return None
+    normalized: list[dict[str, Any]] = []
+    for t in tools:
+        if t.get("type") == "function" and "function" in t:
+            normalized.append(t)
+        elif "function" in t:
+            normalized.append({"type": "function", "function": t["function"]})
+    return normalized or None
 
 # ─── OpenAI Compatibility Adapter ───────────────────────────────────────────
 
@@ -115,7 +98,6 @@ class MockResponse:
 async def call_llm(messages, tools=None, model=None, tool_choice=None):
     client = _get_client()
     target_model = model or DEFAULT_MODEL
-    if "/" in target_model: target_model = target_model.split("/")[-1]
 
     # 1. Wrap the last message in a safe rules template (avoid over-strict prompts)
     if messages and messages[-1]["role"] == "user":
@@ -134,45 +116,32 @@ USER INPUT:
 {orig}
 """
 
-    config = types.GenerateContentConfig(
-        tools=_map_tools(tools),
-        temperature=0.3,
-        max_output_tokens=1000,
-        system_instruction=[types.Part(text="""You are a professional AI assistant. 
-Follow strict rules: No reasoning, No extra text. Provide clean, final answers in structured format (bullet points or numbered steps).""")]
-    )
-
     try:
-        # 3. Call Gemini
-        response = client.models.generate_content(
+        oai_messages = _map_messages(messages)
+        oai_tools = _map_tools(tools)
+
+        # 2. Call OpenRouter (OpenAI-compatible)
+        response = await client.chat.completions.create(
             model=target_model,
-            contents=_map_messages(messages),
-            config=config
+            messages=oai_messages,
+            tools=oai_tools,
+            tool_choice=tool_choice,
+            temperature=0.3,
+            max_tokens=1000,
         )
-        logger.debug("Raw Gemini response: %r", response)
+        logger.debug("Raw OpenRouter response: %r", response)
 
-        # 4. Extract Tool Calls
-        tool_calls = None
-        if response.candidates and response.candidates[0].content.parts:
-            parts = response.candidates[0].content.parts
-            google_calls = [p.function_call for p in parts if p.function_call]
-            if google_calls:
-                tool_calls = [type('TC', (), {
-                    'id': f"call_{c.name}_{i}",
-                    'function': type('F', (), {'name': c.name, 'arguments': json.dumps(c.args or {})}),
-                    'type': 'function'
-                }) for i, c in enumerate(google_calls)]
+        choice = response.choices[0] if response.choices else None
+        msg = choice.message if choice else None
 
-        # 5. Extract text safely (Gemini SDK compatible)
-        text = _extract_text_from_response(response)
+        text = (msg.content or "").strip() if msg and msg.content else ""
+        tool_calls = getattr(msg, "tool_calls", None) if msg else None
 
         if not text and not tool_calls:
-            text = "⚠️ Empty response from model (no candidates/parts text). Try relaxing the prompt or check safety blocks."
+            text = "⚠️ Empty response from model (no message content/tool_calls)."
 
         return MockResponse(text, tool_calls, model=target_model)
 
     except Exception as e:
-        logger.exception("Gemini API error")
-        if "404" in str(e) and target_model == DEFAULT_MODEL:
-            return await call_llm(messages, tools, MODEL_NAME, tool_choice)
+        logger.exception("OpenRouter API error")
         raise e
