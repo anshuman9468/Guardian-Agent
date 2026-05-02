@@ -32,6 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from agent.agent_loop import run_agent
+from agent.llm_client import DEFAULT_MODEL
 from agent.tools import TOOL_DEFINITIONS as HARDCODED_TOOL_DEFS
 from agent.tools import tool_executor as hardcoded_executor
 from mcp_servers.server_registry import MCP_SERVERS
@@ -80,7 +81,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     history: list[dict[str, str]] = Field(default_factory=list)
-    model:   str = Field(default="google/gemini-2.5-flash-lite")
+    model:   str = Field(default=DEFAULT_MODEL)
 
 
 class ChatResponse(BaseModel):
