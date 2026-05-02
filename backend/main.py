@@ -228,9 +228,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
     """Send a message. The agent uses live MCP tools, gated by the policy engine."""
     logger.info("POST /chat | model=%s | msg=%r", req.model, req.message[:80])
 
-    # Use the tools defined in tools.py directly for the LLM
-    # (Do not append metadata like '_server' here, or OpenRouter's strict JSON schema validation will reject the payload)
-    all_tools = list(HARDCODED_TOOL_DEFS)
+    # Use the tools defined in tools.py, but CLEAN them first.
+    # AI providers reject requests if the tool definitions contain non-standard keys like '_server'.
+    all_tools = []
+    for t in HARDCODED_TOOL_DEFS:
+        clean_tool = {
+            "type": t.get("type", "function"),
+            "function": t.get("function", {})
+        }
+        all_tools.append(clean_tool)
 
     try:
         answer = await run_agent(
