@@ -10,8 +10,8 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 GEMINI_BASE_URL     = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Default Models
-OR_MODEL      = "gemini-2.5-flash"
-GEMINI_MODEL  = "gemini-2.5-flash"
+OR_MODEL      = "google/gemini-3.0-flash"
+GEMINI_MODEL  = "gemini-3.0-flash"
 DEFAULT_MODEL = OR_MODEL
 
 logger = logging.getLogger(__name__)
