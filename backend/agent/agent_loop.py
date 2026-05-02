@@ -103,15 +103,19 @@ async def run_agent(
         response = await call_llm(messages, tools=tools or None, model=model, tool_choice=tool_choice)
         choice   = response.choices[0]
         msg      = choice.message
+        
+        # Defensive access to finish_reason and tool_calls
+        finish_reason = getattr(choice, "finish_reason", "stop")
+        tool_calls    = getattr(msg, "tool_calls", None)
 
         # Debug print (temp)
-        print(f"[iter {iteration}] finish={choice.finish_reason} | tool_calls={bool(msg.tool_calls)}")
+        print(f"[iter {iteration}] finish={finish_reason} | tool_calls={bool(tool_calls)}")
 
         # ── Tool-call branch ──────────────────────────────────────────────────
-        if msg.tool_calls:
+        if tool_calls:
             messages.append(msg)  # append assistant message with tool_calls
 
-            for tool_call in msg.tool_calls:
+            for tool_call in tool_calls:
                 tool_name = tool_call.function.name
                 try:
                     raw_args = tool_call.function.arguments or "{}"
