@@ -47,6 +47,18 @@ class MockMessage:
         self.tool_calls = tool_calls
         self.role = "assistant"
 
+    def __getitem__(self, key):
+        if key == "content": return self.content
+        if key == "tool_calls": return self.tool_calls
+        if key == "role": return self.role
+        raise KeyError(f"'{key}' not found in MockMessage")
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
 class MockChoice:
     def __init__(self, content, tool_calls=None):
         self.message = MockMessage(content, tool_calls)
