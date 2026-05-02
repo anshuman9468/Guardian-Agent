@@ -20,30 +20,43 @@ def _get_client():
 
 # ─── Mappers ──────────────────────────────────────────────────────────────────
 
-def _map_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _map_messages(messages: list[Any]) -> list[dict[str, Any]]:
     """
     Normalize messages into OpenAI-compatible shape for OpenRouter.
     Keeps system/user/assistant/tool roles intact.
     """
     mapped: list[dict[str, Any]] = []
     for m in messages or []:
-        role = m.get("role", "user")
+        # Support both dict messages and our MockMessage instances.
+        if isinstance(m, dict):
+            role = m.get("role", "user")
+            content = m.get("content", None)
+            tool_call_id = m.get("tool_call_id", None)
+            name = m.get("name", None)
+            tool_calls = m.get("tool_calls", None)
+        else:
+            role = getattr(m, "role", "user")
+            content = getattr(m, "content", None)
+            tool_call_id = getattr(m, "tool_call_id", None)
+            name = getattr(m, "name", None)
+            tool_calls = getattr(m, "tool_calls", None)
+
         msg: dict[str, Any] = {"role": role}
 
         # Pass through tool call messages if present; otherwise content.
-        if "content" in m:
-            msg["content"] = m.get("content")
+        if content is not None:
+            msg["content"] = content
         if role == "tool":
             # OpenAI schema: tool messages should include tool_call_id
-            if "tool_call_id" in m:
-                msg["tool_call_id"] = m["tool_call_id"]
-            elif "name" in m:
+            if tool_call_id:
+                msg["tool_call_id"] = tool_call_id
+            elif name:
                 # Some adapters send name instead; keep it as best-effort.
-                msg["name"] = m["name"]
+                msg["name"] = name
 
         # Some callers might attach tool_calls on assistant messages.
-        if role == "assistant" and "tool_calls" in m and m["tool_calls"] is not None:
-            msg["tool_calls"] = m["tool_calls"]
+        if role == "assistant" and tool_calls is not None:
+            msg["tool_calls"] = tool_calls
 
         mapped.append(msg)
     return mapped
