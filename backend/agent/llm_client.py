@@ -22,12 +22,23 @@ def _get_client():
 # ─── Mappers ──────────────────────────────────────────────────────────────────
 
 def _map_messages(messages: list[dict[str, Any]]) -> list[types.Content]:
+    """Maps OpenAI messages (user, assistant, tool, system) to Gemini roles (user, model)."""
     mapped = []
     for m in messages:
-        role = m["role"]
-        if role == "assistant": role = "model"
-        if role == "system": continue 
-        mapped.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
+        role = m.get("role", "user")
+        content = m.get("content", "")
+
+        # Gemini only supports 'user' and 'model'
+        if role == "user":
+            gemini_role = "user"
+        else:
+            # assistant, tool, system -> model
+            gemini_role = "model"
+        
+        mapped.append(types.Content(
+            role=gemini_role, 
+            parts=[types.Part(text=str(content))]
+        ))
     return mapped
 
 def _map_tools(tools: list[dict[str, Any]]) -> list[types.Tool]:
