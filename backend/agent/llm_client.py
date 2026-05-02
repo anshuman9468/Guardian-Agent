@@ -50,6 +50,36 @@ def _map_tools(tools: list[dict[str, Any]]) -> list[types.Tool]:
     ) for t in tools]
     return [types.Tool(function_declarations=declarations)]
 
+def _extract_text_from_response(response: Any) -> str:
+    """
+    Gemini responses are not reliably available on response.text.
+    Prefer candidates[0].content.parts[*].text and fall back safely.
+    """
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return ""
+
+        content = getattr(candidates[0], "content", None)
+        parts = getattr(content, "parts", None) or []
+        texts: list[str] = []
+        for p in parts:
+            t = getattr(p, "text", None)
+            if isinstance(t, str) and t.strip():
+                texts.append(t.strip())
+        if texts:
+            return "\n".join(texts).strip()
+    except Exception:
+        # Intentionally swallow parsing errors; caller handles empty text.
+        return ""
+
+    # Last resort: some SDK versions expose response.text, but it's not consistent.
+    try:
+        t = getattr(response, "text", None)
+        return t.strip() if isinstance(t, str) and t.strip() else ""
+    except Exception:
+        return ""
+
 # ─── OpenAI Compatibility Adapter ───────────────────────────────────────────
 
 class MockMessage:
@@ -87,18 +117,18 @@ async def call_llm(messages, tools=None, model=None, tool_choice=None):
     target_model = model or DEFAULT_MODEL
     if "/" in target_model: target_model = target_model.split("/")[-1]
 
-    # 1. Wrap the last message in the Strict Rules template
+    # 1. Wrap the last message in a safe rules template (avoid over-strict prompts)
     if messages and messages[-1]["role"] == "user":
         orig = messages[-1]["content"]
         messages[-1]["content"] = f"""
 You are an AI assistant. Your task is to provide clean, structured, and final answers only.
 
-STRICT RULES:
-1. Do NOT explain your reasoning.
-2. Do NOT include thinking steps.
-3. Do NOT include unnecessary text.
-4. Do NOT repeat the question.
-5. Output must be concise and directly usable.
+Rules:
+- No unnecessary explanation
+- Keep it concise
+- Follow the requested format strictly
+- If JSON is requested: return valid JSON ONLY
+- Otherwise: return structured text
 
 USER INPUT:
 {orig}
@@ -119,7 +149,7 @@ Follow strict rules: No reasoning, No extra text. Provide clean, final answers i
             contents=_map_messages(messages),
             config=config
         )
-        print("RAW GEMINI RESPONSE:", response)
+        logger.debug("Raw Gemini response: %r", response)
 
         # 4. Extract Tool Calls
         tool_calls = None
@@ -133,23 +163,16 @@ Follow strict rules: No reasoning, No extra text. Provide clean, final answers i
                     'type': 'function'
                 }) for i, c in enumerate(google_calls)]
 
-        # 5. Extract text safely (Multi-layered senior approach)
-        text = ""
-        if hasattr(response, "text") and response.text:
-            text = response.text.strip()
-        elif response.candidates and response.candidates[0].content.parts:
-            try:
-                text = response.candidates[0].content.parts[0].text.strip()
-            except (AttributeError, IndexError):
-                text = ""
+        # 5. Extract text safely (Gemini SDK compatible)
+        text = _extract_text_from_response(response)
 
         if not text and not tool_calls:
-            text = "⚠️ Empty response from model"
+            text = "⚠️ Empty response from model (no candidates/parts text). Try relaxing the prompt or check safety blocks."
 
         return MockResponse(text, tool_calls, model=target_model)
 
     except Exception as e:
-        print("GEMINI API ERROR:", e)
+        logger.exception("Gemini API error")
         if "404" in str(e) and target_model == DEFAULT_MODEL:
             return await call_llm(messages, tools, MODEL_NAME, tool_choice)
         raise e
