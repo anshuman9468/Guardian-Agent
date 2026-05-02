@@ -3,38 +3,32 @@ import os
 from typing import Any
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
-import openai
 
-# Configuration
+# ─── Configuration ────────────────────────────────────────────────────────────
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 GEMINI_BASE_URL     = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
-# Default Models
-OR_MODEL      = "google/gemini-2.0-flash-lite-preview-02-05:free"
-GEMINI_MODEL  = "gemini-1.5-flash"
+# Models
+OR_MODEL      = "google/gemini-2.5-flash-lite"   # OpenRouter
+GEMINI_MODEL  = "gemini-1.5-flash"               # Google direct
 DEFAULT_MODEL = OR_MODEL
 
 logger = logging.getLogger(__name__)
 
-# Clients
-_or_client: AsyncOpenAI | None = None
-_gemini_client: AsyncOpenAI | None = None
+# ─── Clients ──────────────────────────────────────────────────────────────────
 
 def _get_or_client() -> AsyncOpenAI | None:
-    global _or_client
     key = os.getenv("OPENROUTER_API_KEY")
     if not key: return None
-    if _or_client is None:
-        _or_client = AsyncOpenAI(api_key=key, base_url=OPENROUTER_BASE_URL)
-    return _or_client
+    return AsyncOpenAI(api_key=key, base_url=OPENROUTER_BASE_URL)
 
 def _get_gemini_client() -> AsyncOpenAI | None:
-    global _gemini_client
-    key = os.getenv("GEMINI_API_KEY")
+    # Check for both GOOGLE_API_KEY (as requested) and GEMINI_API_KEY
+    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not key: return None
-    if _gemini_client is None:
-        _gemini_client = AsyncOpenAI(api_key=key, base_url=GEMINI_BASE_URL)
-    return _gemini_client
+    return AsyncOpenAI(api_key=key, base_url=GEMINI_BASE_URL)
+
+# ─── Core LLM Call with Fallback ─────────────────────────────────────────────
 
 async def call_llm(
     messages: list[dict[str, Any]],
@@ -43,20 +37,23 @@ async def call_llm(
     tool_choice: str | dict | None = None,
 ) -> ChatCompletion:
     """
-    Async call to LLM with automatic fallback from OpenRouter to Google Gemini.
+    Production-level LLM caller:
+    - Primary: OpenRouter
+    - Fallback: Google Gemini Direct
     """
     or_client = _get_or_client()
     gemini_client = _get_gemini_client()
 
-    # 1. Try OpenRouter First (if key exists)
+    # 1. 🔹 Primary: OpenRouter
     if or_client:
         try:
             target_model = model or OR_MODEL
-            logger.info("Attempting primary LLM call (OpenRouter) | model=%s", target_model)
+            logger.info("Attempting Primary (OpenRouter) | model=%s", target_model)
+            
             kwargs: dict[str, Any] = {
                 "model":      target_model,
                 "messages":   messages,
-                "max_tokens": 800,
+                "max_tokens": 1500
             }
             if tools:
                 kwargs["tools"] = tools
@@ -65,23 +62,17 @@ async def call_llm(
             return await or_client.chat.completions.create(**kwargs)
 
         except Exception as e:
-            logger.warning(f"OpenRouter failed: {e}. Switching to Gemini fallback...")
-    
-    # 2. Fallback to Gemini
-    if gemini_client:
-        logger.info("Attempting fallback LLM call (Google Gemini)")
-        try:
-            # Strip OpenRouter provider prefix if present
-            safe_gemini_model = GEMINI_MODEL
-            if model and "/" in model:
-                # "google/gemini-flash-1.5" -> "gemini-1.5-flash"
-                temp = model.split("/")[-1]
-                if "gemini" in temp: safe_gemini_model = temp
+            logger.warning(f"OpenRouter failed → switching to Gemini fallback: {e}")
 
+    # 2. 🔹 Fallback: Google Gemini Direct
+    if gemini_client:
+        try:
+            logger.info("Attempting Fallback (Google Gemini) | model=%s", GEMINI_MODEL)
+            
             kwargs: dict[str, Any] = {
-                "model":      safe_gemini_model,
+                "model":      GEMINI_MODEL,
                 "messages":   messages,
-                "max_tokens": 1000,
+                "max_tokens": 2000
             }
             if tools:
                 kwargs["tools"] = tools
@@ -89,7 +80,8 @@ async def call_llm(
 
             return await gemini_client.chat.completions.create(**kwargs)
         except Exception as e:
-            logger.error(f"Gemini fallback also failed: {e}")
+            logger.error(f"Fallback also failed: {e}")
             raise e
 
-    raise EnvironmentError("No valid LLM API keys found. Please set OPENROUTER_API_KEY or GEMINI_API_KEY in Render environment variables.")
+    # No keys found
+    raise EnvironmentError("No valid LLM API keys found (OPENROUTER_API_KEY or GOOGLE_API_KEY).")
