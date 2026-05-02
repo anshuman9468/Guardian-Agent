@@ -113,15 +113,17 @@ Follow strict rules: No reasoning, No extra text. Provide clean, final answers i
     )
 
     try:
+        # 3. Call Gemini
         response = client.models.generate_content(
             model=target_model,
             contents=_map_messages(messages),
             config=config
         )
+        print("RAW GEMINI RESPONSE:", response)
 
-        # Extract tools safely
+        # 4. Extract Tool Calls
         tool_calls = None
-        if response.candidates[0].content.parts:
+        if response.candidates and response.candidates[0].content.parts:
             parts = response.candidates[0].content.parts
             google_calls = [p.function_call for p in parts if p.function_call]
             if google_calls:
@@ -131,17 +133,23 @@ Follow strict rules: No reasoning, No extra text. Provide clean, final answers i
                     'type': 'function'
                 }) for i, c in enumerate(google_calls)]
 
-        # Extract text safely
+        # 5. Extract text safely (Multi-layered senior approach)
         text = ""
-        try:
-            text = response.text
-        except (AttributeError, ValueError):
-            if response.candidates[0].content.parts:
-                text = response.candidates[0].content.parts[0].text or ""
+        if hasattr(response, "text") and response.text:
+            text = response.text.strip()
+        elif response.candidates and response.candidates[0].content.parts:
+            try:
+                text = response.candidates[0].content.parts[0].text.strip()
+            except (AttributeError, IndexError):
+                text = ""
+
+        if not text and not tool_calls:
+            text = "⚠️ Empty response from model"
 
         return MockResponse(text, tool_calls, model=target_model)
 
     except Exception as e:
+        print("GEMINI API ERROR:", e)
         if "404" in str(e) and target_model == DEFAULT_MODEL:
             return await call_llm(messages, tools, MODEL_NAME, tool_choice)
         raise e

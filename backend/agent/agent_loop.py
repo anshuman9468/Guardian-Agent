@@ -163,6 +163,9 @@ async def run_agent(
         else:
             final = msg.content or ""
             
+            print("LLM RESPONSE OBJECT:", response)
+            print("FINAL EXTRACTED CONTENT:", final)
+
             logger.info("Agent done | iterations=%d | answer_len=%d", iteration, len(final))
             return final
 
